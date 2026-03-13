@@ -148,10 +148,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   let streamingStartPromise: Promise<void> | null = null;
   type StreamTextUpdateMode = "snapshot" | "delta";
 
-  // Timing tracking for end-to-end response time
-  let replyStartTime = 0;
-  const showTiming = account.config?.showTiming ?? true;
-
   const queueStreamingUpdate = (
     nextText: string,
     options?: {
@@ -217,11 +213,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     await partialUpdateQueue;
     if (streaming?.isActive()) {
       let text = streamText;
-      // Append timing info for streaming mode
-      if (showTiming && replyStartTime > 0) {
-        const elapsed = ((Date.now() - replyStartTime) / 1000).toFixed(1);
-        text = text + `\n\n⏱️ 此次回复共花费 ${elapsed} 秒`;
-      }
       if (mentionTargets?.length) {
         text = buildMentionedCardContent(mentionTargets, text);
       }
@@ -240,14 +231,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
       onReplyStart: () => {
         deliveredFinalTexts.clear();
-        replyStartTime = Date.now();
         if (streamingEnabled && renderMode === "card") {
           startStreaming();
         }
         void typingCallbacks.onReplyStart?.();
       },
       deliver: async (payload: ReplyPayload, info) => {
-        let text = payload.text ?? "";
+        const text = payload.text ?? "";
         const mediaList =
           payload.mediaUrls && payload.mediaUrls.length > 0
             ? payload.mediaUrls
@@ -259,18 +249,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         const skipTextForDuplicateFinal =
           info?.kind === "final" && hasText && deliveredFinalTexts.has(text);
         const shouldDeliverText = hasText && !skipTextForDuplicateFinal;
-
-        // Append timing info to final message (only for non-streaming mode)
-        // Note: Streaming mode timing is handled in closeStreaming()
-        if (
-          info?.kind === "final" &&
-          showTiming &&
-          replyStartTime > 0 &&
-          !(streamingEnabled && streaming?.isActive())
-        ) {
-          const elapsed = ((Date.now() - replyStartTime) / 1000).toFixed(1);
-          text = text + `\n\n⏱️ 此次回复共花费 ${elapsed} 秒`;
-        }
 
         if (!shouldDeliverText && !hasMedia) {
           return;
@@ -305,9 +283,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               queueStreamingUpdate(text, { mode: "delta" });
             }
             if (info?.kind === "final") {
-              // Remove any existing timing info before merging to avoid duplication
-              const textWithoutTiming = text.replace(/\n\n⏱️ 此次回复共花费 [0-9.]+ 秒$/g, "");
-              streamText = mergeStreamingText(streamText, textWithoutTiming);
+              streamText = mergeStreamingText(streamText, text);
               await closeStreaming();
               deliveredFinalTexts.add(text);
             }
