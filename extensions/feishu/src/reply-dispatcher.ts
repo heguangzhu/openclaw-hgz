@@ -248,14 +248,25 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     return parts.join("");
   };
 
+  let flushQueueCount = 0;
+  let flushDoneCount = 0;
+  let lastFlushDoneAt = 0;
   const flushStreamingCardUpdate = (combined: string) => {
+    const idx = ++flushQueueCount;
+    const enqueuedAt = Date.now();
     partialUpdateQueue = partialUpdateQueue.then(async () => {
+      const startedAt = Date.now();
       if (streamingStartPromise) {
         await streamingStartPromise;
       }
       if (streaming?.isActive()) {
         await streaming.update(combined);
       }
+      flushDoneCount = idx;
+      lastFlushDoneAt = Date.now();
+      console.error(
+        `[DIAG-FLUSH] ${new Date(lastFlushDoneAt).toISOString()} #${idx} waited=${startedAt - enqueuedAt}ms run=${lastFlushDoneAt - startedAt}ms textLen=${combined.length}`,
+      );
     });
   };
 
@@ -335,17 +346,32 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   };
 
   const closeStreaming = async () => {
+    const csT0 = Date.now();
+    console.error(
+      `[DIAG-CLOSE] ${new Date(csT0).toISOString()} closeStreaming: enter pendingFlushes=${flushQueueCount - flushDoneCount} totalQueued=${flushQueueCount}`,
+    );
     if (streamingStartPromise) {
       await streamingStartPromise;
     }
+    const startPromiseDoneAt = Date.now();
+    console.error(
+      `[DIAG-CLOSE] ${new Date(startPromiseDoneAt).toISOString()} closeStreaming: streamingStartPromise resolved elapsed=${startPromiseDoneAt - csT0}ms`,
+    );
     await partialUpdateQueue;
+    console.error(
+      `[DIAG-CLOSE] ${new Date().toISOString()} closeStreaming: queues drained elapsed=${Date.now() - csT0}ms isActive=${streaming?.isActive() ?? false} flushDone=${flushDoneCount}/${flushQueueCount}`,
+    );
     if (streaming?.isActive()) {
       let text = buildCombinedStreamText(reasoningText, streamText);
       if (mentionTargets?.length) {
         text = buildMentionedCardContent(mentionTargets, text);
       }
       const finalNote = resolveCardNote(agentId, identity, prefixContext.prefixContext);
+      const closeT0 = Date.now();
       await streaming.close(text, { note: finalNote });
+      console.error(
+        `[DIAG-CLOSE] ${new Date().toISOString()} closeStreaming: streaming.close done elapsed=${Date.now() - closeT0}ms total=${Date.now() - csT0}ms`,
+      );
       // Track the raw streamed text so the duplicate-final check in deliver()
       // can skip the redundant text delivery that arrives after onIdle closes
       // the streaming card.
