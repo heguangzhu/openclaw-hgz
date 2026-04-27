@@ -119,12 +119,17 @@ export async function addTypingIndicator(params: {
   const client = createFeishuClient(account);
 
   try {
+    const apiPreT = Date.now();
+    console.error(`[DIAG-TYPING] ${new Date(apiPreT).toISOString()} api-pre msgId=${messageId}`);
     const response = await client.im.messageReaction.create({
       path: { message_id: messageId },
       data: {
         reaction_type: { emoji_type: TYPING_EMOJI },
       },
     });
+    console.error(
+      `[DIAG-TYPING] ${new Date().toISOString()} api-post msgId=${messageId} elapsed=${Date.now() - apiPreT}ms`,
+    );
 
     // Feishu SDK may return a normal response with an API-level error code
     // instead of throwing. Detect backoff codes and throw to trip the breaker.

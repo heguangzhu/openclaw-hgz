@@ -77,6 +77,63 @@ function normalizeEpochMs(timestamp: number | undefined): number | undefined {
   return timestamp < MS_EPOCH_MIN ? timestamp * 1000 : timestamp;
 }
 
+/**
+ * Pre-fire the typing reaction the moment a webhook is dispatched, so the
+ * Feishu reaction-API round trip overlaps with reply-pipeline setup instead
+ * of running serially after it. Returns the in-flight Promise (or undefined
+ * if pre-firing should be skipped). The dispatcher's typing.start callback
+ * awaits this Promise instead of firing a fresh API call.
+ */
+export function prefireFeishuTypingIndicator(params: {
+  cfg: ClawdbotConfig;
+  accountId?: string;
+  replyToMessageId?: string;
+  messageCreateTimeMs?: number;
+  runtime?: RuntimeEnv;
+}): Promise<TypingIndicatorState> | undefined {
+  const account = resolveFeishuRuntimeAccount({ cfg: params.cfg, accountId: params.accountId });
+  if (!account.configured) {
+    return undefined;
+  }
+  if (!(account.config.typingIndicator ?? true)) {
+    return undefined;
+  }
+  if (!params.replyToMessageId) {
+    return undefined;
+  }
+  const messageCreateTimeMs = normalizeEpochMs(params.messageCreateTimeMs);
+  if (
+    messageCreateTimeMs !== undefined &&
+    Date.now() - messageCreateTimeMs > TYPING_INDICATOR_MAX_AGE_MS
+  ) {
+    return undefined;
+  }
+  const t0 = Date.now();
+  console.error(
+    `[DIAG-TYPING] ${new Date(t0).toISOString()} prefire-start msgId=${params.replyToMessageId}`,
+  );
+  return addTypingIndicator({
+    cfg: params.cfg,
+    messageId: params.replyToMessageId,
+    accountId: params.accountId,
+    runtime: params.runtime,
+  })
+    .then((state) => {
+      console.error(
+        `[DIAG-TYPING] ${new Date().toISOString()} prefire-done msgId=${params.replyToMessageId} elapsed=${Date.now() - t0}ms reactionId=${state.reactionId ?? "null"}`,
+      );
+      return state;
+    })
+    .catch((err) => {
+      console.error(
+        `[DIAG-TYPING] ${new Date().toISOString()} prefire-failed msgId=${params.replyToMessageId} elapsed=${Date.now() - t0}ms err=${String(err)}`,
+      );
+      // Surface no reactionId so the dispatcher can decide whether to retry
+      // through its normal start-callback path. Errors here are non-fatal.
+      return { messageId: params.replyToMessageId!, reactionId: null };
+    });
+}
+
 /** Build a card header from agent identity config. */
 function resolveCardHeader(
   agentId: string,
@@ -130,6 +187,11 @@ type CreateFeishuReplyDispatcherParams = {
   /** Epoch ms when the inbound message was created. Used to suppress typing
    *  indicators on old/replayed messages after context compaction (#30418). */
   messageCreateTimeMs?: number;
+  /** In-flight Promise from prefireFeishuTypingIndicator(), kicked off at
+   *  dispatch entry to overlap the reaction-API round trip with reply-pipeline
+   *  setup. When provided, the typing.start callback awaits this instead of
+   *  firing a fresh request. */
+  prefiredTypingPromise?: Promise<TypingIndicatorState>;
 };
 
 export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherParams) {
@@ -161,6 +223,26 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     accountId,
     typing: {
       start: async () => {
+        const tStart = Date.now();
+        console.error(
+          `[DIAG-TYPING] ${new Date(tStart).toISOString()} typing-callback-start msgId=${replyToMessageId ?? "<none>"}`,
+        );
+        // Feishu reactions persist until explicitly removed, so skip keepalive
+        // re-adds when a reaction already exists. Re-adding the same emoji
+        // triggers a new push notification for every call (#28660).
+        if (typingState?.reactionId) {
+          return;
+        }
+        // If we pre-fired the reaction at webhook entry to overlap with
+        // pipeline setup, just claim its result. By the time keepalive ticks
+        // arrive, the pre-fire request has usually already resolved.
+        if (params.prefiredTypingPromise) {
+          typingState = await params.prefiredTypingPromise;
+          console.error(
+            `[DIAG-TYPING] ${new Date().toISOString()} typing-callback-prefired msgId=${replyToMessageId} elapsed=${Date.now() - tStart}ms reactionId=${typingState?.reactionId ?? "null"}`,
+          );
+          return;
+        }
         // Check if typing indicator is enabled (default: true)
         if (!(account.config.typingIndicator ?? true)) {
           return;
@@ -177,18 +259,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         ) {
           return;
         }
-        // Feishu reactions persist until explicitly removed, so skip keepalive
-        // re-adds when a reaction already exists. Re-adding the same emoji
-        // triggers a new push notification for every call (#28660).
-        if (typingState?.reactionId) {
-          return;
-        }
         typingState = await addTypingIndicator({
           cfg,
           messageId: replyToMessageId,
           accountId,
           runtime: params.runtime,
         });
+        console.error(
+          `[DIAG-TYPING] ${new Date().toISOString()} typing-callback-done msgId=${replyToMessageId} elapsed=${Date.now() - tStart}ms reactionId=${typingState?.reactionId ?? "null"}`,
+        );
       },
       stop: async () => {
         if (!typingState) {
