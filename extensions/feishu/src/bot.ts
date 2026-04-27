@@ -49,7 +49,7 @@ import {
   isFeishuGroupAllowed,
 } from "./policy.js";
 import { resolveFeishuReasoningPreviewEnabled } from "./reasoning-preview.js";
-import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
+import { createFeishuReplyDispatcher, prefireFeishuTypingIndicator } from "./reply-dispatcher.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { getMessageFeishu, listFeishuThreadMessages, sendMessageFeishu } from "./send.js";
 export type { FeishuBotAddedEvent, FeishuMessageEvent } from "./event-types.js";
@@ -368,6 +368,9 @@ export async function handleFeishuMessage(params: {
 
   log(
     `feishu[${account.accountId}]: received message from ${ctx.senderOpenId} in ${ctx.chatId} (${ctx.chatType})`,
+  );
+  console.error(
+    `[DIAG-TYPING] ${new Date().toISOString()} webhook-handler-ready msgId=${ctx.messageId}`,
   );
 
   // Log mention targets if detected
@@ -1090,6 +1093,13 @@ export async function handleFeishuMessage(params: {
         if (agentId === activeAgentId) {
           // Active agent: real Feishu dispatcher (responds on Feishu)
           const identity = resolveAgentOutboundIdentity(cfg, agentId);
+          const prefiredTypingPromise = prefireFeishuTypingIndicator({
+            cfg,
+            accountId: account.accountId,
+            replyToMessageId: replyTargetMessageId,
+            messageCreateTimeMs,
+            runtime: runtime as RuntimeEnv,
+          });
           const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
             cfg,
             agentId,
@@ -1105,6 +1115,7 @@ export async function handleFeishuMessage(params: {
             accountId: account.accountId,
             identity,
             messageCreateTimeMs,
+            prefiredTypingPromise,
           });
 
           log(
@@ -1199,6 +1210,13 @@ export async function handleFeishuMessage(params: {
         }),
         sessionKey: route.sessionKey,
       });
+      const prefiredTypingPromise = prefireFeishuTypingIndicator({
+        cfg,
+        accountId: account.accountId,
+        replyToMessageId: replyTargetMessageId,
+        messageCreateTimeMs,
+        runtime: runtime as RuntimeEnv,
+      });
       const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
         cfg,
         agentId: route.agentId,
@@ -1214,9 +1232,13 @@ export async function handleFeishuMessage(params: {
         accountId: account.accountId,
         identity,
         messageCreateTimeMs,
+        prefiredTypingPromise,
       });
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
+      console.error(
+        `[DIAG-TYPING] ${new Date().toISOString()} dispatch-start msgId=${ctx.messageId}`,
+      );
       const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
         dispatcher,
         onSettled: () => {
