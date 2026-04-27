@@ -33,7 +33,24 @@ export function resolveDefaultModelRef(cfg?: OpenClawConfig): { provider: string
   return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
 }
 
+const hasAuthForProviderCache = new Map<string, boolean>();
+
+export function invalidateHasAuthForProviderCache(): void {
+  hasAuthForProviderCache.clear();
+}
+
 export function hasAuthForProvider(params: { provider: string; agentDir?: string }): boolean {
+  const cacheKey = `${params.provider}|${params.agentDir ?? ""}`;
+  const cached = hasAuthForProviderCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = computeHasAuthForProvider(params);
+  hasAuthForProviderCache.set(cacheKey, result);
+  return result;
+}
+
+function computeHasAuthForProvider(params: { provider: string; agentDir?: string }): boolean {
   if (resolveEnvApiKey(params.provider)?.apiKey) {
     return true;
   }

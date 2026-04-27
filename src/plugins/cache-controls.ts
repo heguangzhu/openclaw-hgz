@@ -1,7 +1,7 @@
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 
-export const DEFAULT_PLUGIN_DISCOVERY_CACHE_MS = 1000;
-export const DEFAULT_PLUGIN_MANIFEST_CACHE_MS = 1000;
+export const DEFAULT_PLUGIN_DISCOVERY_CACHE_MS = 86_400_000;
+export const DEFAULT_PLUGIN_MANIFEST_CACHE_MS = 86_400_000;
 
 export function shouldUsePluginSnapshotCache(env: NodeJS.ProcessEnv): boolean {
   if (normalizeOptionalString(env.OPENCLAW_DISABLE_PLUGIN_DISCOVERY_CACHE)) {

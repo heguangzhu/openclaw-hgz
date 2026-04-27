@@ -82,7 +82,27 @@ export {
   hasUsableOAuthCredential,
 } from "../agents/auth-profiles/credential-state.js";
 
+const isProviderApiKeyConfiguredCache = new Map<string, boolean>();
+
+export function invalidateIsProviderApiKeyConfiguredCache(): void {
+  isProviderApiKeyConfiguredCache.clear();
+}
+
 export function isProviderApiKeyConfigured(params: {
+  provider: string;
+  agentDir?: string;
+}): boolean {
+  const cacheKey = `${params.provider}|${params.agentDir ?? ""}`;
+  const cached = isProviderApiKeyConfiguredCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = computeIsProviderApiKeyConfigured(params);
+  isProviderApiKeyConfiguredCache.set(cacheKey, result);
+  return result;
+}
+
+function computeIsProviderApiKeyConfigured(params: {
   provider: string;
   agentDir?: string;
 }): boolean {
