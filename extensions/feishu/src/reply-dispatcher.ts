@@ -7,6 +7,7 @@ import {
 } from "openclaw/plugin-sdk/reply-payload";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
+import { diagLog } from "./diag-log.js";
 import { sendMediaFeishu } from "./media.js";
 import type { MentionTarget } from "./mention-target.types.js";
 import { buildMentionedCardContent } from "./mention.js";
@@ -98,9 +99,7 @@ export function prefireFeishuTypingIndicator(params: {
     return undefined;
   }
   const t0 = Date.now();
-  console.error(
-    `[DIAG-TYPING] ${new Date(t0).toISOString()} prefire-start msgId=${params.replyToMessageId}`,
-  );
+  diagLog("TYPING", `prefire-start msgId=${params.replyToMessageId}`);
   return addTypingIndicator({
     cfg: params.cfg,
     messageId: params.replyToMessageId,
@@ -108,14 +107,16 @@ export function prefireFeishuTypingIndicator(params: {
     runtime: params.runtime,
   })
     .then((state) => {
-      console.error(
-        `[DIAG-TYPING] ${new Date().toISOString()} prefire-done msgId=${params.replyToMessageId} elapsed=${Date.now() - t0}ms reactionId=${state.reactionId ?? "null"}`,
+      diagLog(
+        "TYPING",
+        `prefire-done msgId=${params.replyToMessageId} elapsed=${Date.now() - t0}ms reactionId=${state.reactionId ?? "null"}`,
       );
       return state;
     })
     .catch((err) => {
-      console.error(
-        `[DIAG-TYPING] ${new Date().toISOString()} prefire-failed msgId=${params.replyToMessageId} elapsed=${Date.now() - t0}ms err=${String(err)}`,
+      diagLog(
+        "TYPING",
+        `prefire-failed msgId=${params.replyToMessageId} elapsed=${Date.now() - t0}ms err=${String(err)}`,
       );
       // Surface no reactionId so the dispatcher can decide whether to retry
       // through its normal start-callback path. Errors here are non-fatal.
@@ -209,9 +210,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     typing: {
       start: async () => {
         const tStart = Date.now();
-        console.error(
-          `[DIAG-TYPING] ${new Date(tStart).toISOString()} typing-callback-start msgId=${replyToMessageId ?? "<none>"}`,
-        );
+        diagLog("TYPING", `typing-callback-start msgId=${replyToMessageId ?? "<none>"}`);
         // Feishu reactions persist until explicitly removed, so skip keepalive
         // re-adds when a reaction already exists. Re-adding the same emoji
         // triggers a new push notification for every call (#28660).
@@ -223,8 +222,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // arrive, the pre-fire request has usually already resolved.
         if (params.prefiredTypingPromise) {
           typingState = await params.prefiredTypingPromise;
-          console.error(
-            `[DIAG-TYPING] ${new Date().toISOString()} typing-callback-prefired msgId=${replyToMessageId} elapsed=${Date.now() - tStart}ms reactionId=${typingState?.reactionId ?? "null"}`,
+          diagLog(
+            "TYPING",
+            `typing-callback-prefired msgId=${replyToMessageId} elapsed=${Date.now() - tStart}ms reactionId=${typingState?.reactionId ?? "null"}`,
           );
           return;
         }
@@ -250,8 +250,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           accountId,
           runtime: params.runtime,
         });
-        console.error(
-          `[DIAG-TYPING] ${new Date().toISOString()} typing-callback-done msgId=${replyToMessageId} elapsed=${Date.now() - tStart}ms reactionId=${typingState?.reactionId ?? "null"}`,
+        diagLog(
+          "TYPING",
+          `typing-callback-done msgId=${replyToMessageId} elapsed=${Date.now() - tStart}ms reactionId=${typingState?.reactionId ?? "null"}`,
         );
       },
       stop: async () => {
@@ -343,8 +344,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
       flushDoneCount = idx;
       lastFlushDoneAt = Date.now();
-      console.error(
-        `[DIAG-FLUSH] ${new Date(lastFlushDoneAt).toISOString()} #${idx} waited=${startedAt - enqueuedAt}ms run=${lastFlushDoneAt - startedAt}ms textLen=${combined.length}`,
+      diagLog(
+        "FLUSH",
+        `#${idx} waited=${startedAt - enqueuedAt}ms run=${lastFlushDoneAt - startedAt}ms textLen=${combined.length}`,
       );
     });
   };
@@ -426,19 +428,22 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   const closeStreaming = async () => {
     const csT0 = Date.now();
-    console.error(
-      `[DIAG-CLOSE] ${new Date(csT0).toISOString()} closeStreaming: enter pendingFlushes=${flushQueueCount - flushDoneCount} totalQueued=${flushQueueCount}`,
+    diagLog(
+      "CLOSE",
+      `closeStreaming: enter pendingFlushes=${flushQueueCount - flushDoneCount} totalQueued=${flushQueueCount}`,
     );
     if (streamingStartPromise) {
       await streamingStartPromise;
     }
     const startPromiseDoneAt = Date.now();
-    console.error(
-      `[DIAG-CLOSE] ${new Date(startPromiseDoneAt).toISOString()} closeStreaming: streamingStartPromise resolved elapsed=${startPromiseDoneAt - csT0}ms`,
+    diagLog(
+      "CLOSE",
+      `closeStreaming: streamingStartPromise resolved elapsed=${startPromiseDoneAt - csT0}ms`,
     );
     await partialUpdateQueue;
-    console.error(
-      `[DIAG-CLOSE] ${new Date().toISOString()} closeStreaming: queues drained elapsed=${Date.now() - csT0}ms isActive=${streaming?.isActive() ?? false} flushDone=${flushDoneCount}/${flushQueueCount}`,
+    diagLog(
+      "CLOSE",
+      `closeStreaming: queues drained elapsed=${Date.now() - csT0}ms isActive=${streaming?.isActive() ?? false} flushDone=${flushDoneCount}/${flushQueueCount}`,
     );
     if (streaming?.isActive()) {
       let text = buildCombinedStreamText(reasoningText, streamText);
@@ -448,8 +453,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const finalNote = resolveCardNote(agentId, identity, prefixContext.prefixContext);
       const closeT0 = Date.now();
       await streaming.close(text, { note: finalNote });
-      console.error(
-        `[DIAG-CLOSE] ${new Date().toISOString()} closeStreaming: streaming.close done elapsed=${Date.now() - closeT0}ms total=${Date.now() - csT0}ms`,
+      diagLog(
+        "CLOSE",
+        `closeStreaming: streaming.close done elapsed=${Date.now() - closeT0}ms total=${Date.now() - csT0}ms`,
       );
       // Track the raw streamed text so the duplicate-final check in deliver()
       // can skip the redundant text delivery that arrives after onIdle closes

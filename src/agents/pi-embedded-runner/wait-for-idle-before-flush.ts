@@ -1,3 +1,5 @@
+import { diagLog } from "../../utils/diag-log.js";
+
 type IdleAwareAgent = {
   waitForIdle?: (() => Promise<void>) | undefined;
 };
@@ -48,26 +50,24 @@ export async function flushPendingToolResultsAfterIdle(opts: {
 }): Promise<void> {
   const t0 = Date.now();
   const hasWaitForIdle = typeof opts.agent?.waitForIdle === "function";
-  console.error(
-    `[DIAG-IDLE] ${new Date(t0).toISOString()} flushPendingToolResultsAfterIdle: start hasWaitForIdle=${hasWaitForIdle}`,
-  );
+  diagLog("IDLE", `flushPendingToolResultsAfterIdle: start hasWaitForIdle=${hasWaitForIdle}`);
   const timedOut = await waitForAgentIdleBestEffort(
     opts.agent,
     opts.timeoutMs ?? DEFAULT_WAIT_FOR_IDLE_TIMEOUT_MS,
   );
   const t1 = Date.now();
-  console.error(
-    `[DIAG-IDLE] ${new Date(t1).toISOString()} flushPendingToolResultsAfterIdle: idle-wait-done timedOut=${timedOut} elapsed=${t1 - t0}ms`,
+  diagLog(
+    "IDLE",
+    `flushPendingToolResultsAfterIdle: idle-wait-done timedOut=${timedOut} elapsed=${t1 - t0}ms`,
   );
   if (timedOut && opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
     opts.sessionManager.clearPendingToolResults();
-    console.error(
-      `[DIAG-IDLE] ${new Date().toISOString()} flushPendingToolResultsAfterIdle: cleared (timeout) elapsed=${Date.now() - t0}ms`,
+    diagLog(
+      "IDLE",
+      `flushPendingToolResultsAfterIdle: cleared (timeout) elapsed=${Date.now() - t0}ms`,
     );
     return;
   }
   opts.sessionManager?.flushPendingToolResults?.();
-  console.error(
-    `[DIAG-IDLE] ${new Date().toISOString()} flushPendingToolResultsAfterIdle: flushed elapsed=${Date.now() - t0}ms`,
-  );
+  diagLog("IDLE", `flushPendingToolResultsAfterIdle: flushed elapsed=${Date.now() - t0}ms`);
 }

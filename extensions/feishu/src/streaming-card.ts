@@ -5,6 +5,7 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { getFeishuUserAgent } from "./client.js";
+import { diagLog } from "./diag-log.js";
 import { resolveFeishuCardTemplate, type CardHeaderConfig } from "./send.js";
 import type { FeishuDomain } from "./types.js";
 
@@ -302,8 +303,9 @@ export class FeishuStreamingSession {
     try {
       bodyText = await response.text();
     } catch (e) {
-      console.error(
-        `[DIAG-RESP] ${new Date().toISOString()} ${label} seq=${sequence} status=${response.status} body-read-failed=${String(e)}`,
+      diagLog(
+        "RESP",
+        `${label} seq=${sequence} status=${response.status} body-read-failed=${String(e)}`,
       );
       return;
     }
@@ -320,12 +322,14 @@ export class FeishuStreamingSession {
     const isBizOk = code === 0;
     if (!isHttpOk || !isBizOk) {
       const snippet = bodyText.length > 300 ? `${bodyText.slice(0, 300)}…` : bodyText;
-      console.error(
-        `[DIAG-RESP] ${new Date().toISOString()} ${label} seq=${sequence} textLen=${textLen} status=${response.status} code=${String(code)} msg=${String(msg)} body=${snippet}`,
+      diagLog(
+        "RESP",
+        `${label} seq=${sequence} textLen=${textLen} status=${response.status} code=${String(code)} msg=${String(msg)} body=${snippet}`,
       );
     } else {
-      console.error(
-        `[DIAG-RESP] ${new Date().toISOString()} ${label} seq=${sequence} textLen=${textLen} status=${response.status} code=0 ok`,
+      diagLog(
+        "RESP",
+        `${label} seq=${sequence} textLen=${textLen} status=${response.status} code=0 ok`,
       );
     }
   }

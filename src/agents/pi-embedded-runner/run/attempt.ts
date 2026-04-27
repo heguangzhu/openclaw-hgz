@@ -44,6 +44,7 @@ import {
 } from "../../../trajectory/runtime.js";
 import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { resolveUserPath } from "../../../utils.js";
+import { diagLog } from "../../../utils/diag-log.js";
 import { normalizeMessageChannel } from "../../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
@@ -557,8 +558,9 @@ export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
   const _bootT0 = Date.now();
-  console.error(
-    `[DIAG-BOOT] ${new Date(_bootT0).toISOString()} runEmbeddedAttempt: enter sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId}`,
+  diagLog(
+    "BOOT",
+    `runEmbeddedAttempt: enter sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId}`,
   );
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
   const runAbortController = new AbortController();
@@ -569,9 +571,7 @@ export async function runEmbeddedAttempt(
   );
 
   await fs.mkdir(resolvedWorkspace, { recursive: true });
-  console.error(
-    `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: pre-resolveSandbox elapsed=${Date.now() - _bootT0}ms`,
-  );
+  diagLog("BOOT", `runEmbeddedAttempt: pre-resolveSandbox elapsed=${Date.now() - _bootT0}ms`);
 
   const sandboxSessionKey =
     params.sandboxSessionKey?.trim() || params.sessionKey?.trim() || params.sessionId;
@@ -586,9 +586,7 @@ export async function runEmbeddedAttempt(
       : sandbox.workspaceDir
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
-  console.error(
-    `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: post-resolveSandbox elapsed=${Date.now() - _bootT0}ms`,
-  );
+  diagLog("BOOT", `runEmbeddedAttempt: post-resolveSandbox elapsed=${Date.now() - _bootT0}ms`);
   const { sessionAgentId } = resolveSessionAgentIds({
     sessionKey: params.sessionKey,
     config: params.config,
@@ -631,9 +629,7 @@ export async function runEmbeddedAttempt(
     });
 
     const _lockT = Date.now();
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: pre-acquireSessionLock elapsed=${Date.now() - _bootT0}ms`,
-    );
+    diagLog("BOOT", `runEmbeddedAttempt: pre-acquireSessionLock elapsed=${Date.now() - _bootT0}ms`);
     const sessionLock = await acquireSessionWriteLock({
       sessionFile: params.sessionFile,
       maxHoldMs: resolveSessionLockMaxHoldFromTimeout({
@@ -644,8 +640,9 @@ export async function runEmbeddedAttempt(
       }),
     });
 
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: post-acquireSessionLock elapsed=${Date.now() - _lockT}ms total=${Date.now() - _bootT0}ms`,
+    diagLog(
+      "BOOT",
+      `runEmbeddedAttempt: post-acquireSessionLock elapsed=${Date.now() - _lockT}ms total=${Date.now() - _bootT0}ms`,
     );
 
     const sessionLabel = params.sessionKey ?? params.sessionId;
@@ -687,9 +684,7 @@ export async function runEmbeddedAttempt(
       });
     };
     const _toolsRawT = Date.now();
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: pre-toolsRaw elapsed=${Date.now() - _bootT0}ms`,
-    );
+    diagLog("BOOT", `runEmbeddedAttempt: pre-toolsRaw elapsed=${Date.now() - _bootT0}ms`);
     let _createT = 0;
     const toolsRaw = params.disableTools
       ? []
@@ -758,20 +753,20 @@ export async function runEmbeddedAttempt(
           _createT = Date.now() - __t;
           const __t2 = Date.now();
           const applied = applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow);
-          console.error(
-            `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: createCodingTools=${_createT}ms applyAllow=${Date.now() - __t2}ms toolCount=${allTools.length}`,
+          diagLog(
+            "BOOT",
+            `runEmbeddedAttempt: createCodingTools=${_createT}ms applyAllow=${Date.now() - __t2}ms toolCount=${allTools.length}`,
           );
           return applied;
         })();
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: post-toolsRaw elapsed=${Date.now() - _toolsRawT}ms total=${Date.now() - _bootT0}ms`,
+    diagLog(
+      "BOOT",
+      `runEmbeddedAttempt: post-toolsRaw elapsed=${Date.now() - _toolsRawT}ms total=${Date.now() - _bootT0}ms`,
     );
     const toolsEnabled = supportsModelTools(params.model);
     const bootstrapHasFileAccess = toolsEnabled && toolsRaw.some((tool) => tool.name === "read");
     const _bootstrapT = Date.now();
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: pre-bootstrapRouting elapsed=${Date.now() - _bootT0}ms`,
-    );
+    diagLog("BOOT", `runEmbeddedAttempt: pre-bootstrapRouting elapsed=${Date.now() - _bootT0}ms`);
     const bootstrapRouting = await resolveAttemptWorkspaceBootstrapRouting({
       isWorkspaceBootstrapPending,
       bootstrapContextRunKind: params.bootstrapContextRunKind,
@@ -785,8 +780,9 @@ export async function runEmbeddedAttempt(
     });
     const bootstrapMode = bootstrapRouting.bootstrapMode;
     const shouldStripBootstrapFromContext = bootstrapRouting.shouldStripBootstrapFromContext;
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: post-bootstrapRouting elapsed=${Date.now() - _bootstrapT}ms total=${Date.now() - _bootT0}ms`,
+    diagLog(
+      "BOOT",
+      `runEmbeddedAttempt: post-bootstrapRouting elapsed=${Date.now() - _bootstrapT}ms total=${Date.now() - _bootT0}ms`,
     );
     const _bootCtxT = Date.now();
     const {
@@ -815,8 +811,9 @@ export async function runEmbeddedAttempt(
           runKind: params.bootstrapContextRunKind,
         }),
     });
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: post-resolveBootstrapContext elapsed=${Date.now() - _bootCtxT}ms total=${Date.now() - _bootT0}ms`,
+    diagLog(
+      "BOOT",
+      `runEmbeddedAttempt: post-resolveBootstrapContext elapsed=${Date.now() - _bootCtxT}ms total=${Date.now() - _bootT0}ms`,
     );
     const remappedContextFiles = remapInjectedContextFilesToWorkspace({
       files: resolvedContextFiles,
@@ -996,8 +993,9 @@ export async function runEmbeddedAttempt(
 
     const _machT = Date.now();
     const machineName = await getMachineDisplayName();
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: getMachineDisplayName-done elapsed=${Date.now() - _machT}ms total=${Date.now() - _bootT0}ms`,
+    diagLog(
+      "BOOT",
+      `runEmbeddedAttempt: getMachineDisplayName-done elapsed=${Date.now() - _machT}ms total=${Date.now() - _bootT0}ms`,
     );
     const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
     let runtimeCapabilities = runtimeChannel
@@ -1108,8 +1106,9 @@ export async function runEmbeddedAttempt(
       cwd: effectiveWorkspace,
       moduleUrl: import.meta.url,
     });
-    console.error(
-      `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: resolveDocsPath-done elapsed=${Date.now() - _docsT}ms total=${Date.now() - _bootT0}ms`,
+    diagLog(
+      "BOOT",
+      `runEmbeddedAttempt: resolveDocsPath-done elapsed=${Date.now() - _docsT}ms total=${Date.now() - _bootT0}ms`,
     );
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
@@ -1237,15 +1236,17 @@ export async function runEmbeddedAttempt(
     let trajectoryEndRecorded = false;
     try {
       const _bootPhaseT = Date.now();
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: pre-repairSessionFile elapsed=${Date.now() - _bootT0}ms`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: pre-repairSessionFile elapsed=${Date.now() - _bootT0}ms`,
       );
       await repairSessionFileIfNeeded({
         sessionFile: params.sessionFile,
         warn: (message) => log.warn(message),
       });
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: repairSessionFile-done elapsed=${Date.now() - _bootPhaseT}ms`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: repairSessionFile-done elapsed=${Date.now() - _bootPhaseT}ms`,
       );
       const hadSessionFile = await fs
         .stat(params.sessionFile)
@@ -1266,8 +1267,9 @@ export async function runEmbeddedAttempt(
 
       const _prewarmT = Date.now();
       await prewarmSessionFile(params.sessionFile);
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: prewarmSessionFile-done elapsed=${Date.now() - _prewarmT}ms`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: prewarmSessionFile-done elapsed=${Date.now() - _prewarmT}ms`,
       );
       sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
         agentId: sessionAgentId,
@@ -1312,8 +1314,9 @@ export async function runEmbeddedAttempt(
           }),
         warn: (message) => log.warn(message),
       });
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: contextEngineBootstrap-done elapsed=${Date.now() - _ctxEngineT}ms`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: contextEngineBootstrap-done elapsed=${Date.now() - _ctxEngineT}ms`,
       );
 
       const _sessMgrT = Date.now();
@@ -1324,8 +1327,9 @@ export async function runEmbeddedAttempt(
         sessionId: params.sessionId,
         cwd: effectiveWorkspace,
       });
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: prepareSessionManager-done elapsed=${Date.now() - _sessMgrT}ms`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: prepareSessionManager-done elapsed=${Date.now() - _sessMgrT}ms`,
       );
 
       const settingsManager = createPreparedEmbeddedPiSettingsManager({
@@ -1356,8 +1360,9 @@ export async function runEmbeddedAttempt(
       });
       const _resourceT = Date.now();
       await resourceLoader.reload();
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: resourceLoader.reload-done elapsed=${Date.now() - _resourceT}ms`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: resourceLoader.reload-done elapsed=${Date.now() - _resourceT}ms`,
       );
       // DefaultResourceLoader.reload() rehydrates settings from disk and can drop OpenClaw
       // compaction overrides applied in createPreparedEmbeddedPiSettingsManager.
@@ -1548,8 +1553,9 @@ export async function runEmbeddedAttempt(
         modelApi: params.model.api,
         workspaceDir: params.workspaceDir,
       });
-      console.error(
-        `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: pre-session.started elapsed=${Date.now() - _bootT0}ms sessionId=${params.sessionId}`,
+      diagLog(
+        "BOOT",
+        `runEmbeddedAttempt: pre-session.started elapsed=${Date.now() - _bootT0}ms sessionId=${params.sessionId}`,
       );
       trajectoryRecorder?.recordEvent("session.started", {
         trigger: params.trigger,
@@ -2641,8 +2647,9 @@ export async function runEmbeddedAttempt(
               activeSession.agent.state.messages = normalizedReplayMessages;
             }
             finalPromptText = effectivePrompt;
-            console.error(
-              `[DIAG-BOOT] ${new Date().toISOString()} runEmbeddedAttempt: prompt.submitted elapsed=${Date.now() - _bootT0}ms sessionId=${params.sessionId}`,
+            diagLog(
+              "BOOT",
+              `runEmbeddedAttempt: prompt.submitted elapsed=${Date.now() - _bootT0}ms sessionId=${params.sessionId}`,
             );
             trajectoryRecorder?.recordEvent("prompt.submitted", {
               prompt: effectivePrompt,
@@ -3191,9 +3198,7 @@ export async function runEmbeddedAttempt(
       // See: https://github.com/openclaw/openclaw/issues/8643
       let cleanupError: unknown;
       const cleanupStart = Date.now();
-      console.error(
-        `[DIAG-CLOSE] ${new Date(cleanupStart).toISOString()} cleanupEmbeddedAttemptResources: start sessionId=${params.sessionId}`,
-      );
+      diagLog("CLOSE", `cleanupEmbeddedAttemptResources: start sessionId=${params.sessionId}`);
       try {
         await cleanupEmbeddedAttemptResources({
           removeToolResultContextGuard,
@@ -3211,8 +3216,9 @@ export async function runEmbeddedAttempt(
       } catch (err) {
         cleanupError = err;
       }
-      console.error(
-        `[DIAG-CLOSE] ${new Date().toISOString()} cleanupEmbeddedAttemptResources: end elapsed=${Date.now() - cleanupStart}ms hasError=${cleanupError !== undefined}`,
+      diagLog(
+        "CLOSE",
+        `cleanupEmbeddedAttemptResources: end elapsed=${Date.now() - cleanupStart}ms hasError=${cleanupError !== undefined}`,
       );
       emitDiagnosticRunCompleted?.(
         cleanupError || promptError

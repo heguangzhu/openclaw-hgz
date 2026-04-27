@@ -10,6 +10,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "../shared/string-coerce.js";
+import { diagLog } from "../utils/diag-log.js";
 import { resolveGatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { createApplyPatchTool } from "./apply-patch.js";
@@ -497,7 +498,7 @@ export function createOpenClawCodingTools(options?: {
     }
     return [tool];
   });
-  console.error(`[DIAG-TOOLS] base elapsed=${Date.now() - _diagBaseT}ms count=${base.length}`);
+  diagLog("TOOLS", `base elapsed=${Date.now() - _diagBaseT}ms count=${base.length}`);
   const _diagExecT = Date.now();
   const { cleanupMs: cleanupMsOverride, ...execDefaults } = options?.exec ?? {};
   const execTool = createLazyExecTool({
@@ -554,11 +555,12 @@ export function createOpenClawCodingTools(options?: {
               : undefined,
           workspaceOnly: applyPatchWorkspaceOnly,
         });
-  console.error(`[DIAG-TOOLS] exec+process+applyPatch elapsed=${Date.now() - _diagExecT}ms`);
+  diagLog("TOOLS", `exec+process+applyPatch elapsed=${Date.now() - _diagExecT}ms`);
   const _diagChannelT = Date.now();
   const channelAgentTools = listChannelAgentTools({ cfg: options?.config });
-  console.error(
-    `[DIAG-TOOLS] listChannelAgentTools elapsed=${Date.now() - _diagChannelT}ms count=${channelAgentTools.length}`,
+  diagLog(
+    "TOOLS",
+    `listChannelAgentTools elapsed=${Date.now() - _diagChannelT}ms count=${channelAgentTools.length}`,
   );
   const _diagOpenclawToolsT = Date.now();
   const openclawTools = createOpenClawTools({
@@ -612,8 +614,9 @@ export function createOpenClawCodingTools(options?: {
     onYield: options?.onYield,
     allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
   });
-  console.error(
-    `[DIAG-TOOLS] createOpenClawTools elapsed=${Date.now() - _diagOpenclawToolsT}ms count=${openclawTools.length}`,
+  diagLog(
+    "TOOLS",
+    `createOpenClawTools elapsed=${Date.now() - _diagOpenclawToolsT}ms count=${openclawTools.length}`,
   );
   const _diagOpenclawT = Date.now();
   const tools: AnyAgentTool[] = [
@@ -648,8 +651,9 @@ export function createOpenClawCodingTools(options?: {
     ...channelAgentTools,
     ...openclawTools,
   ];
-  console.error(
-    `[DIAG-TOOLS] tools-array(channel+openclaw) elapsed=${Date.now() - _diagOpenclawT}ms count=${tools.length}`,
+  diagLog(
+    "TOOLS",
+    `tools-array(channel+openclaw) elapsed=${Date.now() - _diagOpenclawT}ms count=${tools.length}`,
   );
   const _diagPipelineT = Date.now();
   const toolsForMemoryFlush =
@@ -739,8 +743,9 @@ export function createOpenClawCodingTools(options?: {
     agentId,
   });
 
-  console.error(
-    `[DIAG-TOOLS] policy+normalize+wrap elapsed=${Date.now() - _diagPipelineT}ms final=${withDeferredFollowupDescriptions.length}`,
+  diagLog(
+    "TOOLS",
+    `policy+normalize+wrap elapsed=${Date.now() - _diagPipelineT}ms final=${withDeferredFollowupDescriptions.length}`,
   );
   // NOTE: Keep canonical (lowercase) tool names here.
   // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names

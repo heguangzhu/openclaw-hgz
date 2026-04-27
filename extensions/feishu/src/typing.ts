@@ -1,6 +1,7 @@
 import type { ClawdbotConfig, RuntimeEnv } from "../runtime-api.js";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
+import { diagLog } from "./diag-log.js";
 import { getFeishuRuntime } from "./runtime.js";
 
 // Feishu emoji types for typing indicator
@@ -120,16 +121,14 @@ export async function addTypingIndicator(params: {
 
   try {
     const apiPreT = Date.now();
-    console.error(`[DIAG-TYPING] ${new Date(apiPreT).toISOString()} api-pre msgId=${messageId}`);
+    diagLog("TYPING", `api-pre msgId=${messageId}`);
     const response = await client.im.messageReaction.create({
       path: { message_id: messageId },
       data: {
         reaction_type: { emoji_type: TYPING_EMOJI },
       },
     });
-    console.error(
-      `[DIAG-TYPING] ${new Date().toISOString()} api-post msgId=${messageId} elapsed=${Date.now() - apiPreT}ms`,
-    );
+    diagLog("TYPING", `api-post msgId=${messageId} elapsed=${Date.now() - apiPreT}ms`);
 
     // Feishu SDK may return a normal response with an API-level error code
     // instead of throwing. Detect backoff codes and throw to trip the breaker.
