@@ -111,7 +111,7 @@ export async function describeImageFile(
 }
 
 export async function describeImageFileWithModel(params: DescribeImageFileWithModelParams) {
-  const timeoutMs = params.timeoutMs ?? 30_000;
+  const timeoutMs = params.timeoutMs ?? 300_000;
   const providerRegistry = buildProviderRegistry(undefined, params.cfg);
   const provider = providerRegistry.get(normalizeMediaProviderId(params.provider));
   if (!provider?.describeImage) {
