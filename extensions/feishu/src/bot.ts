@@ -43,6 +43,7 @@ import { getChatInfo } from "./chat.js";
 import { createFeishuClient } from "./client.js";
 import { finalizeFeishuMessageProcessing, tryRecordMessagePersistent } from "./dedup.js";
 import { resolveFeishuMessageDedupeKey } from "./dedupe-key.js";
+import { diagLog } from "./diag-log.js";
 import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
 import { extractMentionTargets, isMentionForwardRequest } from "./mention.js";
 import {
@@ -514,9 +515,7 @@ export async function handleFeishuMessage(params: {
   log(
     `feishu[${account.accountId}]: received message from ${ctx.senderOpenId} in ${ctx.chatId} (${ctx.chatType})`,
   );
-  console.error(
-    `[DIAG-TYPING] ${new Date().toISOString()} webhook-handler-ready msgId=${ctx.messageId}`,
-  );
+  diagLog("TYPING", `webhook-handler-ready msgId=${ctx.messageId}`);
 
   // Log mention targets if detected
   if (ctx.mentionTargets && ctx.mentionTargets.length > 0) {
@@ -1566,9 +1565,7 @@ export async function handleFeishuMessage(params: {
       });
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
-      console.error(
-        `[DIAG-TYPING] ${new Date().toISOString()} dispatch-start msgId=${ctx.messageId}`,
-      );
+      diagLog("TYPING", `dispatch-start msgId=${ctx.messageId}`);
       const turnResult = await core.channel.turn.run({
         channel: "feishu",
         accountId: route.accountId,
