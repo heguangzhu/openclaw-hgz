@@ -436,8 +436,14 @@ export class FeishuStreamingSession {
     this.clearFlushTimer();
     await this.queue;
 
-    const pendingMerged = mergeStreamingText(this.state.currentText, this.pendingText ?? undefined);
-    const text = finalText ? mergeStreamingText(pendingMerged, finalText) : pendingMerged;
+    // When the caller supplies finalText, treat it as the authoritative card
+    // body. Merging it with pendingText (the mid-stream draft, which may carry
+    // obsolete status lines or a different layout) can hit
+    // mergeStreamingText's fallback concat and produce garbled output where
+    // the old draft is prepended to the clean final answer.
+    const text = finalText
+      ? finalText
+      : mergeStreamingText(this.state.currentText, this.pendingText ?? undefined);
     const apiBase = resolveApiBase(this.creds.domain);
 
     // Only send final update if content differs from what's already displayed
