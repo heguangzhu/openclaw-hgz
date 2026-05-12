@@ -233,7 +233,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   let streamText = "";
   let lastPartial = "";
   let reasoningText = "";
-  let statusLine = "";
+  let statusLines: string[] = [];
   let snapshotBaseText = "";
   let lastSnapshotTextLength = 0;
   const deliveredFinalTexts = new Set<string>();
@@ -264,8 +264,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     if (answer) {
       parts.push(answer);
     }
-    if (statusLine) {
-      parts.push(parts.length > 0 ? `\n\n${statusLine}` : statusLine);
+    if (statusLines.length > 0) {
+      const MAX_VISIBLE_LINES = 10;
+      const visible = statusLines.slice(-MAX_VISIBLE_LINES);
+      const text = visible.join("\n");
+      parts.push(parts.length > 0 ? `\n\n${text}` : text);
     }
     return parts.join("");
   };
@@ -379,7 +382,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
       await partialUpdateQueue;
       if (streaming?.isActive()) {
-        statusLine = "";
+        statusLines = [];
         let text = buildCombinedStreamText(reasoningText, streamText);
         if (mentionTargets?.length) {
           text = buildMentionedCardContent(mentionTargets, text);
@@ -403,14 +406,18 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       streamText = "";
       lastPartial = "";
       reasoningText = "";
-      statusLine = "";
+      statusLines = [];
       snapshotBaseText = "";
       lastSnapshotTextLength = 0;
     }
   };
 
   const updateStreamingStatusLine = (nextStatusLine: string) => {
-    statusLine = nextStatusLine;
+    if (!nextStatusLine) {
+      statusLines = [];
+    } else {
+      statusLines.push(nextStatusLine);
+    }
     if (!streaming?.isActive() && !streamingStartPromise && renderMode !== "card") {
       return;
     }
