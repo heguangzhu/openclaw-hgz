@@ -41,6 +41,12 @@ type StreamingStartOptions = {
 
 const STREAMING_UPDATE_THROTTLE_MS = 160;
 const STREAMING_SIGNIFICANT_DELTA_CHARS = 18;
+// Re-PUT current text if the card has been idle for this long. Stays well
+// under Feishu's ~60s stale threshold so long silent tool-call windows don't
+// kill the stream.
+const STREAMING_HEARTBEAT_IDLE_MS = 25_000;
+// How often the heartbeat timer wakes up to check the idle window.
+const STREAMING_HEARTBEAT_TICK_MS = 5_000;
 
 // Token cache (keyed by domain + appId)
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -187,6 +193,8 @@ export class FeishuStreamingSession {
   private pendingText: string | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private updateThrottleMs = STREAMING_UPDATE_THROTTLE_MS;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatIdleMs = STREAMING_HEARTBEAT_IDLE_MS;
 
   constructor(client: Client, creds: Credentials, log?: (msg: string) => void) {
     this.client = client;
@@ -308,43 +316,110 @@ export class FeishuStreamingSession {
       currentText: "",
       hasNote: !!options?.note,
     };
+    this.lastUpdateTime = Date.now();
+    this.startHeartbeat();
     this.log?.(`Started streaming: cardId=${cardId}, messageId=${sendRes.data.message_id}`);
   }
 
-  private async updateCardContent(text: string, onError?: (error: unknown) => void): Promise<void> {
+  private async updateCardContent(
+    text: string,
+    onError?: (error: unknown) => void,
+  ): Promise<boolean> {
     if (!this.state) {
-      return;
+      return false;
     }
     const apiBase = resolveApiBase(this.creds.domain);
     this.state.sequence += 1;
-    await fetchWithSsrFGuard({
-      url: `${apiBase}/cardkit/v1/cards/${this.state.cardId}/elements/content/content`,
-      init: {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${await getToken(this.creds)}`,
-          "Content-Type": "application/json",
-          "User-Agent": getFeishuUserAgent(),
+    try {
+      const { response, release } = await fetchWithSsrFGuard({
+        url: `${apiBase}/cardkit/v1/cards/${this.state.cardId}/elements/content/content`,
+        init: {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${await getToken(this.creds)}`,
+            "Content-Type": "application/json",
+            "User-Agent": getFeishuUserAgent(),
+          },
+          body: JSON.stringify({
+            content: text,
+            sequence: this.state.sequence,
+            uuid: `s_${this.state.cardId}_${this.state.sequence}`,
+          }),
         },
-        body: JSON.stringify({
-          content: text,
-          sequence: this.state.sequence,
-          uuid: `s_${this.state.cardId}_${this.state.sequence}`,
-        }),
-      },
-      policy: { allowedHostnames: resolveAllowedHostnames(this.creds.domain) },
-      auditContext: "feishu.streaming-card.update",
-    })
-      .then(async ({ release }) => {
+        policy: { allowedHostnames: resolveAllowedHostnames(this.creds.domain) },
+        auditContext: "feishu.streaming-card.update",
+      });
+      try {
+        if (!response.ok) {
+          onError?.(new Error(`HTTP ${response.status}`));
+          return false;
+        }
+        try {
+          const data = (await response.json()) as { code?: number; msg?: string };
+          if (data && typeof data.code === "number" && data.code !== 0) {
+            onError?.(new Error(`code=${data.code} msg=${data.msg ?? ""}`));
+            return false;
+          }
+        } catch {
+          // Non-JSON 2xx response — treat as success.
+        }
+        this.lastUpdateTime = Date.now();
+        return true;
+      } finally {
         await release();
-      })
-      .catch((error) => onError?.(error));
+      }
+    } catch (error) {
+      onError?.(error);
+      return false;
+    }
   }
 
   private clearFlushTimer(): void {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
+    }
+  }
+
+  private startHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      return;
+    }
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.state || this.closed) {
+        return;
+      }
+      if (Date.now() - this.lastUpdateTime < this.heartbeatIdleMs) {
+        return;
+      }
+      // Re-PUT current text (same content, new sequence) as a no-op keepalive
+      // so Feishu does not mark the stream stale during long silent tool-call
+      // windows. Funnel through the queue so we never collide with a real update.
+      this.queue = this.queue
+        .then(async () => {
+          if (!this.state || this.closed) {
+            return;
+          }
+          if (Date.now() - this.lastUpdateTime < this.heartbeatIdleMs) {
+            return;
+          }
+          const text = this.state.currentText || "⏳ Thinking...";
+          await this.updateCardContent(text, (e) =>
+            this.log?.(`Heartbeat update failed: ${String(e)}`),
+          );
+        })
+        .catch(() => {});
+    }, STREAMING_HEARTBEAT_TICK_MS);
+    const timer = this.heartbeatTimer as { unref?: () => void } | null;
+    if (timer && typeof timer.unref === "function") {
+      timer.unref();
+    }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 
@@ -434,6 +509,7 @@ export class FeishuStreamingSession {
     }
     this.closed = true;
     this.clearFlushTimer();
+    this.stopHeartbeat();
     await this.queue;
 
     // When the caller supplies finalText, treat it as the authoritative card
@@ -446,10 +522,17 @@ export class FeishuStreamingSession {
       : mergeStreamingText(this.state.currentText, this.pendingText ?? undefined);
     const apiBase = resolveApiBase(this.creds.domain);
 
-    // Only send final update if content differs from what's already displayed
+    // Only send final update if content differs from what's already displayed.
+    // Track success so we can fall back to a plain reply if the card stream has
+    // already been killed by Feishu (e.g. after long silent tool-call windows).
+    let finalUpdateOk = true;
     if (text && text !== this.state.currentText) {
-      await this.updateCardContent(text);
-      this.state.currentText = text;
+      finalUpdateOk = await this.updateCardContent(text, (e) =>
+        this.log?.(`Final update failed: ${String(e)}`),
+      );
+      if (finalUpdateOk) {
+        this.state.currentText = text;
+      }
     }
 
     // Update note with final model/provider info
@@ -486,6 +569,26 @@ export class FeishuStreamingSession {
     const finalState = this.state;
     this.state = null;
     this.pendingText = null;
+
+    // Fallback: if the card stream rejected our final patch (typically because
+    // the card already went stale during a long silent window), send the final
+    // text as a plain reply so the user actually receives the result.
+    if (!finalUpdateOk && finalText) {
+      try {
+        await this.client.im.message.reply({
+          path: { message_id: finalState.messageId },
+          data: {
+            msg_type: "text",
+            content: JSON.stringify({ text: finalText }),
+          },
+        });
+        this.log?.(
+          `Final card update failed; sent fallback plain reply to ${finalState.messageId}`,
+        );
+      } catch (e) {
+        this.log?.(`Fallback plain reply failed: ${String(e)}`);
+      }
+    }
 
     this.log?.(`Closed streaming: cardId=${finalState.cardId}`);
   }
