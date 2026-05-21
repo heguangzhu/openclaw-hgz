@@ -47,6 +47,12 @@ const STREAMING_SIGNIFICANT_DELTA_CHARS = 18;
 const STREAMING_HEARTBEAT_IDLE_MS = 25_000;
 // How often the heartbeat timer wakes up to check the idle window.
 const STREAMING_HEARTBEAT_TICK_MS = 5_000;
+// Feishu API code returned once the server has closed the streaming window
+// for this card (typically after a long idle period the heartbeat could not
+// cover, e.g. mid-stream context-overflow + auto-compaction). Once we see it,
+// every further PUT against the same card will fail identically — we must
+// give up on the streaming card and surface the content via a plain reply.
+const FEISHU_STREAM_CLOSED_CODE = 300309;
 
 // Token cache (keyed by domain + appId)
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -195,6 +201,14 @@ export class FeishuStreamingSession {
   private updateThrottleMs = STREAMING_UPDATE_THROTTLE_MS;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatIdleMs = STREAMING_HEARTBEAT_IDLE_MS;
+  // True once Feishu has returned 300309 on any PUT against this card.
+  // No subsequent PUT can succeed; future update()/heartbeat calls must
+  // short-circuit and close() must skip the streaming-mode PATCH that would
+  // otherwise re-trigger the same error.
+  private serverStreamClosed = false;
+  // True once we have delivered the in-flight text to the user via a plain
+  // reply fallback, so close() does not send a duplicate.
+  private fallbackReplyText: string | null = null;
 
   constructor(client: Client, creds: Credentials, log?: (msg: string) => void) {
     this.client = client;
@@ -358,6 +372,9 @@ export class FeishuStreamingSession {
           const data = (await response.json()) as { code?: number; msg?: string };
           if (data && typeof data.code === "number" && data.code !== 0) {
             onError?.(new Error(`code=${data.code} msg=${data.msg ?? ""}`));
+            if (data.code === FEISHU_STREAM_CLOSED_CODE) {
+              this.handleServerStreamClosed(text);
+            }
             return false;
           }
         } catch {
@@ -374,6 +391,47 @@ export class FeishuStreamingSession {
     }
   }
 
+  private handleServerStreamClosed(attemptedText: string): void {
+    if (this.serverStreamClosed) {
+      return;
+    }
+    this.serverStreamClosed = true;
+    this.stopHeartbeat();
+    this.clearFlushTimer();
+    this.log?.(
+      `Feishu closed the streaming window (code=${FEISHU_STREAM_CLOSED_CODE}); falling back to plain reply`,
+    );
+    const fallbackText = attemptedText || this.state?.currentText || "";
+    if (!fallbackText) {
+      return;
+    }
+    // Queue the fallback reply so it does not race with whatever the in-flight
+    // queue is currently doing. Catch — we never want fallback failure to
+    // surface as an unhandled rejection.
+    this.queue = this.queue
+      .then(() => this.sendFallbackPlainReply(fallbackText))
+      .catch((e) => this.log?.(`Fallback plain reply failed: ${String(e)}`));
+  }
+
+  private async sendFallbackPlainReply(text: string): Promise<void> {
+    if (!this.state) {
+      return;
+    }
+    if (this.fallbackReplyText === text) {
+      return;
+    }
+    const targetMessageId = this.state.messageId;
+    await this.client.im.message.reply({
+      path: { message_id: targetMessageId },
+      data: {
+        msg_type: "text",
+        content: JSON.stringify({ text }),
+      },
+    });
+    this.fallbackReplyText = text;
+    this.log?.(`Sent fallback plain reply to ${targetMessageId} (${text.length} chars)`);
+  }
+
   private clearFlushTimer(): void {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -386,7 +444,7 @@ export class FeishuStreamingSession {
       return;
     }
     this.heartbeatTimer = setInterval(() => {
-      if (!this.state || this.closed) {
+      if (!this.state || this.closed || this.serverStreamClosed) {
         return;
       }
       if (Date.now() - this.lastUpdateTime < this.heartbeatIdleMs) {
@@ -397,7 +455,7 @@ export class FeishuStreamingSession {
       // windows. Funnel through the queue so we never collide with a real update.
       this.queue = this.queue
         .then(async () => {
-          if (!this.state || this.closed) {
+          if (!this.state || this.closed || this.serverStreamClosed) {
             return;
           }
           if (Date.now() - this.lastUpdateTime < this.heartbeatIdleMs) {
@@ -439,7 +497,7 @@ export class FeishuStreamingSession {
   }
 
   async update(text: string): Promise<void> {
-    if (!this.state || this.closed) {
+    if (!this.state || this.closed || this.serverStreamClosed) {
       return;
     }
     const mergedInput = mergeStreamingText(this.pendingText ?? this.state.currentText, text);
@@ -525,8 +583,12 @@ export class FeishuStreamingSession {
     // Only send final update if content differs from what's already displayed.
     // Track success so we can fall back to a plain reply if the card stream has
     // already been killed by Feishu (e.g. after long silent tool-call windows).
+    // If the server has already closed the stream, skip the PUT — it would just
+    // 300309 again — and treat that as a failed final update.
     let finalUpdateOk = true;
-    if (text && text !== this.state.currentText) {
+    if (this.serverStreamClosed) {
+      finalUpdateOk = false;
+    } else if (text && text !== this.state.currentText) {
       finalUpdateOk = await this.updateCardContent(text, (e) =>
         this.log?.(`Final update failed: ${String(e)}`),
       );
@@ -535,61 +597,58 @@ export class FeishuStreamingSession {
       }
     }
 
-    // Update note with final model/provider info
-    if (options?.note) {
+    // Update note with final model/provider info (skip if server already closed
+    // the stream — the note PUT would fail identically).
+    if (options?.note && !this.serverStreamClosed) {
       await this.updateNoteContent(options.note);
     }
 
-    // Close streaming mode
-    this.state.sequence += 1;
-    await fetchWithSsrFGuard({
-      url: `${apiBase}/cardkit/v1/cards/${this.state.cardId}/settings`,
-      init: {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${await getToken(this.creds)}`,
-          "Content-Type": "application/json; charset=utf-8",
-          "User-Agent": getFeishuUserAgent(),
-        },
-        body: JSON.stringify({
-          settings: JSON.stringify({
-            config: { streaming_mode: false, summary: { content: truncateSummary(text) } },
+    // Close streaming mode (skip if the server already closed it — the PATCH
+    // would just return 300309 again).
+    if (!this.serverStreamClosed) {
+      this.state.sequence += 1;
+      await fetchWithSsrFGuard({
+        url: `${apiBase}/cardkit/v1/cards/${this.state.cardId}/settings`,
+        init: {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${await getToken(this.creds)}`,
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": getFeishuUserAgent(),
+          },
+          body: JSON.stringify({
+            settings: JSON.stringify({
+              config: { streaming_mode: false, summary: { content: truncateSummary(text) } },
+            }),
+            sequence: this.state.sequence,
+            uuid: `c_${this.state.cardId}_${this.state.sequence}`,
           }),
-          sequence: this.state.sequence,
-          uuid: `c_${this.state.cardId}_${this.state.sequence}`,
-        }),
-      },
-      policy: { allowedHostnames: resolveAllowedHostnames(this.creds.domain) },
-      auditContext: "feishu.streaming-card.close",
-    })
-      .then(async ({ release }) => {
-        await release();
+        },
+        policy: { allowedHostnames: resolveAllowedHostnames(this.creds.domain) },
+        auditContext: "feishu.streaming-card.close",
       })
-      .catch((e) => this.log?.(`Close failed: ${String(e)}`));
+        .then(async ({ release }) => {
+          await release();
+        })
+        .catch((e) => this.log?.(`Close failed: ${String(e)}`));
+    }
     const finalState = this.state;
-    this.state = null;
-    this.pendingText = null;
 
     // Fallback: if the card stream rejected our final patch (typically because
     // the card already went stale during a long silent window), send the final
     // text as a plain reply so the user actually receives the result.
+    // sendFallbackPlainReply dedups against any reply we already shipped from
+    // handleServerStreamClosed during the streaming phase.
     if (!finalUpdateOk && finalText) {
       try {
-        await this.client.im.message.reply({
-          path: { message_id: finalState.messageId },
-          data: {
-            msg_type: "text",
-            content: JSON.stringify({ text: finalText }),
-          },
-        });
-        this.log?.(
-          `Final card update failed; sent fallback plain reply to ${finalState.messageId}`,
-        );
+        await this.sendFallbackPlainReply(finalText);
       } catch (e) {
         this.log?.(`Fallback plain reply failed: ${String(e)}`);
       }
     }
 
+    this.state = null;
+    this.pendingText = null;
     this.log?.(`Closed streaming: cardId=${finalState.cardId}`);
   }
 
