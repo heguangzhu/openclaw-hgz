@@ -26,6 +26,7 @@ const { mockCreateFeishuReplyDispatcher, mockCreateFeishuClient, mockResolveAgen
 
 vi.mock("./reply-dispatcher.js", () => ({
   createFeishuReplyDispatcher: mockCreateFeishuReplyDispatcher,
+  prefireFeishuTypingIndicator: vi.fn(() => undefined),
 }));
 
 vi.mock("./client.js", () => ({

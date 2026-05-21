@@ -288,6 +288,7 @@ const {
 
 vi.mock("./reply-dispatcher.js", () => ({
   createFeishuReplyDispatcher: mockCreateFeishuReplyDispatcher,
+  prefireFeishuTypingIndicator: vi.fn(() => undefined),
 }));
 
 vi.mock("./reasoning-preview.js", () => ({

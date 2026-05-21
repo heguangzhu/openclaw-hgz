@@ -155,6 +155,7 @@ vi.mock("./thread-bindings.js", () => ({
 
 vi.mock("./reply-dispatcher.js", () => ({
   createFeishuReplyDispatcher: createFeishuReplyDispatcherMock,
+  prefireFeishuTypingIndicator: vi.fn(() => undefined),
 }));
 
 vi.mock("./send.js", () => ({
