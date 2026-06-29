@@ -210,6 +210,9 @@ function parseFeishuCardActionEventPayload(value: unknown): FeishuCardActionEven
   const unionId = firstString(operator.union_id);
   const tag = readString(action.tag);
   const actionValue = action.value;
+  // Capture form_value so input/select form cards (e.g. the "来活啦" job card)
+  // can read what the user typed/selected. Button-only cards omit this.
+  const formValue = isRecord(action.form_value) ? action.form_value : undefined;
   const openMessageId = firstString(value.open_message_id, context.open_message_id);
   const contextOpenId = firstString(context.open_id, openId);
   const contextUserId = firstString(context.user_id, userId);
@@ -227,6 +230,7 @@ function parseFeishuCardActionEventPayload(value: unknown): FeishuCardActionEven
     action: {
       value: actionValue,
       tag,
+      ...(formValue ? { form_value: formValue } : {}),
     },
     ...(openMessageId ? { open_message_id: openMessageId } : {}),
     context: {

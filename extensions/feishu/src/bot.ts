@@ -39,6 +39,7 @@ import {
 } from "./bot-runtime-api.js";
 import type { ClawdbotConfig, RuntimeEnv } from "./bot-runtime-api.js";
 import { type FeishuPermissionError, resolveFeishuSenderName } from "./bot-sender-name.js";
+import { FEISHU_JOB_TRIGGER_TEXT, sendFeishuJobInputCard } from "./card-ux-job.js";
 import { getChatInfo } from "./chat.js";
 import { createFeishuClient } from "./client.js";
 import { finalizeFeishuMessageProcessing, tryRecordMessagePersistent } from "./dedup.js";
@@ -754,6 +755,24 @@ export async function handleFeishuMessage(params: {
           `feishu[${account.accountId}]: blocked unauthorized sender ${ctx.senderOpenId} (dmPolicy=${dmPolicy})`,
         );
       }
+      return;
+    }
+
+    // "来活啦" 触发：群里 @机器人 或单聊发送该文本时，弹出任务输入卡片，
+    // 不走正常 agent 回复。到这里访问门控（私聊配对/群 @ 校验）已通过。
+    if (ctx.content.trim() === FEISHU_JOB_TRIGGER_TEXT) {
+      await sendFeishuJobInputCard({
+        cfg,
+        to: isGroup ? `chat:${ctx.chatId}` : `user:${ctx.senderOpenId}`,
+        operatorOpenId: ctx.senderOpenId,
+        chatId: ctx.chatId,
+        chatType: isGroup ? "group" : "p2p",
+        accountId: account.accountId,
+        runtime,
+      });
+      log(
+        `feishu[${account.accountId}]: sent "来活啦" job input card to ${ctx.senderOpenId} in ${ctx.chatId}`,
+      );
       return;
     }
 

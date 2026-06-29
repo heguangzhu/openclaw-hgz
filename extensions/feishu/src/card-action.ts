@@ -8,6 +8,11 @@ import {
   FEISHU_APPROVAL_CONFIRM_ACTION,
   FEISHU_APPROVAL_REQUEST_ACTION,
 } from "./card-ux-approval.js";
+import {
+  FEISHU_JOB_FIELD_INFO,
+  FEISHU_JOB_FIELD_PLATFORM,
+  FEISHU_JOB_SUBMIT_ACTION,
+} from "./card-ux-job.js";
 import { createFeishuClient } from "./client.js";
 import { sendCardFeishu, sendMessageFeishu } from "./send.js";
 
@@ -21,6 +26,8 @@ export type FeishuCardActionEvent = {
   action: {
     value: Record<string, unknown>;
     tag: string;
+    // Present only for form cards (input/select). Maps field name -> value.
+    form_value?: Record<string, unknown>;
   };
   open_message_id?: string;
   context: {
@@ -108,6 +115,7 @@ function buildSyntheticMessageEvent(
   event: FeishuCardActionEvent,
   content: string,
   chatType: "p2p" | "group",
+  mentionBotOpenId?: string,
 ): FeishuMessageEvent {
   const replyTargetMessageId = event.context.open_message_id ?? event.open_message_id;
   return {
@@ -126,6 +134,20 @@ function buildSyntheticMessageEvent(
       chat_type: chatType,
       message_type: "text",
       content: JSON.stringify({ text: content }),
+      // Group chats may require an @mention before the bot responds. Synthetic
+      // messages have no real mention, so inject one matching the bot's open_id
+      // to ensure the dispatched command is processed in groups.
+      ...(mentionBotOpenId
+        ? {
+            mentions: [
+              {
+                key: "@_user_1",
+                id: { open_id: mentionBotOpenId },
+                name: "bot",
+              },
+            ],
+          }
+        : {}),
     },
   };
 }
@@ -147,6 +169,9 @@ async function dispatchSyntheticCommand(params: {
   runtime?: RuntimeEnv;
   accountId?: string;
   chatType?: "p2p" | "group";
+  // When true, the synthetic message is tagged as @-mentioning the bot so it
+  // survives group requireMention gating (used by the job-submit flow).
+  mentionBot?: boolean;
 }): Promise<void> {
   const resolvedChatType = await resolveCardActionChatType({
     event: params.event,
@@ -156,11 +181,42 @@ async function dispatchSyntheticCommand(params: {
   });
   await handleFeishuMessage({
     cfg: params.cfg,
-    event: buildSyntheticMessageEvent(params.event, params.command, resolvedChatType),
+    event: buildSyntheticMessageEvent(
+      params.event,
+      params.command,
+      resolvedChatType,
+      params.mentionBot ? params.botOpenId : undefined,
+    ),
     botOpenId: params.botOpenId,
     runtime: params.runtime,
     accountId: params.accountId,
   });
+}
+
+function readFeishuFormString(formValue: Record<string, unknown> | undefined, key: string): string {
+  const raw = formValue?.[key];
+  if (typeof raw === "string") {
+    return raw.trim();
+  }
+  if (raw === null || raw === undefined) {
+    return "";
+  }
+  return String(raw).trim();
+}
+
+// Assemble the labeled Chinese text fed back into the bot's message pipeline
+// after the "来活啦" job card is submitted.
+function buildFeishuJobSubmitMessage(formValue: Record<string, unknown> | undefined): string {
+  const platform = readFeishuFormString(formValue, FEISHU_JOB_FIELD_PLATFORM);
+  const info = readFeishuFormString(formValue, FEISHU_JOB_FIELD_INFO);
+  const lines = ["【来活啦】新任务"];
+  if (platform) {
+    lines.push(`平台：${platform}`);
+  }
+  if (info) {
+    lines.push(`任务信息：${info}`);
+  }
+  return lines.join("\n");
 }
 
 // Feishu's im.chat.get returns two fields:
@@ -405,6 +461,26 @@ export async function handleFeishuCardAction(params: {
           runtime,
           accountId,
           chatType: envelope.c?.t,
+        });
+        completeFeishuCardActionToken({ token: event.token, accountId: account.accountId });
+        return;
+      }
+
+      // "来活啦" job card submitted: read the form fields, assemble a labeled
+      // Chinese message, and feed it back into the message pipeline as if the
+      // user @-mentioned the bot with that text.
+      if (envelope.a === FEISHU_JOB_SUBMIT_ACTION) {
+        const command = buildFeishuJobSubmitMessage(event.action.form_value);
+        await dispatchSyntheticCommand({
+          cfg,
+          event,
+          command,
+          account,
+          botOpenId: params.botOpenId,
+          runtime,
+          accountId,
+          chatType: envelope.c?.t,
+          mentionBot: true,
         });
         completeFeishuCardActionToken({ token: event.token, accountId: account.accountId });
         return;

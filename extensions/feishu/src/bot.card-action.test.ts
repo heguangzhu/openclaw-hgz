@@ -17,6 +17,7 @@ import {
   FEISHU_APPROVAL_CONFIRM_ACTION,
   FEISHU_APPROVAL_REQUEST_ACTION,
 } from "./card-ux-approval.js";
+import { FEISHU_JOB_SUBMIT_ACTION } from "./card-ux-job.js";
 
 // Mock account resolution
 vi.mock("./accounts.js", () => ({
@@ -537,6 +538,75 @@ describe("Feishu Card Action Handler", () => {
     await handleFeishuCardAction({ cfg, event, runtime });
 
     expect(handleFeishuMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("assembles a labeled message from job-card form values and dispatches it", async () => {
+    const event: FeishuCardActionEvent = {
+      operator: { open_id: "u123", user_id: "uid1", union_id: "un1" },
+      token: "tok-job1",
+      action: {
+        value: createFeishuCardInteractionEnvelope({
+          k: "button",
+          a: FEISHU_JOB_SUBMIT_ACTION,
+          c: { u: "u123", h: "chat1", t: "group", e: Date.now() + 60_000 },
+        }),
+        tag: "button",
+        form_value: {
+          task_info: "  抓取竞品价格\n第二行  ",
+          platform: "星图",
+        },
+      },
+      context: { open_id: "u123", user_id: "uid1", chat_id: "chat1" },
+    };
+
+    await handleFeishuCardAction({ cfg, event, runtime, botOpenId: "ou_bot" });
+
+    expect(handleFeishuMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botOpenId: "ou_bot",
+        event: expect.objectContaining({
+          message: expect.objectContaining({
+            chat_id: "chat1",
+            chat_type: "group",
+            content: '{"text":"【来活啦】新任务\\n平台：星图\\n任务信息：抓取竞品价格\\n第二行"}',
+            // Synthetic message is tagged as @-mentioning the bot so group
+            // requireMention gating lets it through.
+            mentions: expect.arrayContaining([
+              expect.objectContaining({ id: expect.objectContaining({ open_id: "ou_bot" }) }),
+            ]),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("assembles a job message from platform and task info", async () => {
+    const event: FeishuCardActionEvent = {
+      operator: { open_id: "u123", user_id: "uid1", union_id: "un1" },
+      token: "tok-job2",
+      action: {
+        value: createFeishuCardInteractionEnvelope({
+          k: "button",
+          a: FEISHU_JOB_SUBMIT_ACTION,
+          c: { u: "u123", h: "chat1", t: "group", e: Date.now() + 60_000 },
+        }),
+        tag: "button",
+        form_value: { task_info: "只填了信息", platform: "蒲公英" },
+      },
+      context: { open_id: "u123", user_id: "uid1", chat_id: "chat1" },
+    };
+
+    await handleFeishuCardAction({ cfg, event, runtime, botOpenId: "ou_bot" });
+
+    expect(handleFeishuMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          message: expect.objectContaining({
+            content: '{"text":"【来活啦】新任务\\n平台：蒲公英\\n任务信息：只填了信息"}',
+          }),
+        }),
+      }),
+    );
   });
 
   it("keeps an in-flight token claimed while a slow dispatch is still running", async () => {
